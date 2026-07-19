@@ -1,3 +1,4 @@
 venv/
+ai-version/venv/
 __pycache__/
 *.pyc
