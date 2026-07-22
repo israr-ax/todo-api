@@ -48,20 +48,12 @@ init_db()
 
 app = FastAPI(
     title="Task API",
-    description="A simple in-memory CRUD API for managing a to-do list.",
+    description="A simple SQLite CRUD API for managing a to-do list.",
     version="1.0"
 )
 
-# In-memory "database"
-tasks = [
-    {"id": 1, "title": "Buy milk", "done": False},
-    {"id": 2, "title": "Walk the dog", "done": True},
-    {"id": 3, "title": "Finish assignment", "done": False},
-]
-next_id = 4  # tracks the next free id
 
-
-# Custom error format: {"error": "..."} instead of FastAPI's default {"detail": "..."}
+# Custom error format
 @app.exception_handler(HTTPException)
 async def custom_http_exception_handler(request: Request, exc: HTTPException):
     return JSONResponse(status_code=exc.status_code, content={"error": exc.detail})
@@ -125,14 +117,15 @@ def get_task(task_id: int):
 
 @app.get("/stats", summary="Task statistics", description="Returns total, done, and open task counts.")
 def get_stats():
-    total = len(tasks)
-    done_count = sum(1 for t in tasks if t["done"])
-    return {
-        "total": total,
-        "done": done_count,
-        "open": total - done_count
-    }
-    
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM tasks")
+    total = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) FROM tasks WHERE done = 1")
+    done_count = cur.fetchone()[0]
+    conn.close()
+
+    return {"total": total, "done": done_count, "open": total - done_count}    
 
 @app.post("/tasks", status_code=201, summary="Create a task", description="Creates a new task with the given title. Title is required.")
 def create_task(task: TaskCreate):
@@ -183,6 +176,18 @@ def update_task(task_id: int, update: TaskUpdate):
 
     return dict(updated_row)
 
+@app.post("/reset", summary="Reset tasks", description="Restores the original 3 example tasks and clears everything else.")
+def reset_tasks():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM tasks")
+    cur.executemany(
+        "INSERT INTO tasks (title, done) VALUES (?, ?)",
+        [("Buy milk", 0), ("Walk the dog", 1), ("Finish assignment", 0)]
+    )
+    conn.commit()
+    conn.close()
+    return {"message": "Tasks reset to default"}
 
 @app.delete("/tasks/{task_id}", status_code=204, summary="Delete a task", description="Removes a task by id. Unknown id returns 404.")
 def delete_task(task_id: int):
