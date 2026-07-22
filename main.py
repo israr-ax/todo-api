@@ -136,15 +136,20 @@ def get_stats():
 
 @app.post("/tasks", status_code=201, summary="Create a task", description="Creates a new task with the given title. Title is required.")
 def create_task(task: TaskCreate):
-    global next_id
-    
     if not task.title or not task.title.strip():
         raise HTTPException(status_code=400, detail="Title is required and cannot be empty")
-    
-    new_task = {"id": next_id, "title": task.title, "done": False}
-    tasks.append(new_task)
-    next_id += 1
-    return new_task
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO tasks (title, done) VALUES (?, ?)", (task.title, 0))
+    conn.commit()
+
+    new_id = cur.lastrowid
+    cur.execute("SELECT * FROM tasks WHERE id = ?", (new_id,))
+    row = cur.fetchone()
+    conn.close()
+
+    return dict(row)
 
 @app.put("/tasks/{task_id}", summary="Update a task", description="Updates a task's title and/or done status. Unknown id returns 404.")
 def update_task(task_id: int, update: TaskUpdate):
