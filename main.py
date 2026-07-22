@@ -2,6 +2,48 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
+import sqlite3
+
+
+DB_FILE = "tasks.db"
+
+
+def get_db():
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            done BOOLEAN NOT NULL DEFAULT 0
+        )
+    """)
+
+    # only insert defaults if table is empty, otherwise restarting
+    # the server would keep adding duplicates
+    cur.execute("SELECT COUNT(*) FROM tasks")
+    count = cur.fetchone()[0]
+
+    if count == 0:
+        default_tasks = [
+            ("Buy milk", 0),
+            ("Walk the dog", 1),
+            ("Finish assignment", 0),
+        ]
+        cur.executemany("INSERT INTO tasks (title, done) VALUES (?, ?)", default_tasks)
+
+    conn.commit()
+    conn.close()
+
+
+init_db()
 
 
 app = FastAPI(
@@ -48,21 +90,38 @@ def health():
 
 @app.get("/tasks", summary="List all tasks", description="Returns tasks, optionally filtered by done status or search term.")
 def get_tasks(done: Optional[bool] = None, search: Optional[str] = None):
-    result = tasks
+    conn = get_db()
+    cur = conn.cursor()
+
+    query = "SELECT * FROM tasks WHERE 1=1"
+    params = []
 
     if done is not None:
-        result = [t for t in result if t["done"] == done]
+        query += " AND done = ?"
+        params.append(1 if done else 0)
 
     if search:
-        result = [t for t in result if search.lower() in t["title"].lower()]
+        query += " AND title LIKE ?"
+        params.append(f"%{search}%")
 
-    return result
+    cur.execute(query, params)
+    rows = cur.fetchall()
+    conn.close()
+
+    return [dict(r) for r in rows]
+
 @app.get("/tasks/{task_id}", summary="Get one task", description="Returns a single task by id, or 404 if not found.")
 def get_task(task_id: int):
-    for task in tasks:
-        if task["id"] == task_id:
-            return task
-    raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
+    row = cur.fetchone()
+    conn.close()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+    return dict(row)
 
 @app.get("/stats", summary="Task statistics", description="Returns total, done, and open task counts.")
 def get_stats():
